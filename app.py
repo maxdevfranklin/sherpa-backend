@@ -9,7 +9,11 @@ app = FastAPI()
 # Enable CORS for React development server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React development server
+    allow_origins=[
+        "http://localhost:3000",  # React development server
+        "https://sherpa-frontend-production.up.railway.app",  # Production frontend
+        "http://sherpa-frontend-production.up.railway.app"    # Production frontend (non-secure)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
