@@ -1,5 +1,6 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import json
 from services.database import Database
 from services.chatbot import Chatbot
@@ -10,7 +11,23 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Starting up application...")
+    try:
+        db = Database.get_instance()
+        logger.info("Database connection established successfully during startup")
+    except Exception as e:
+        logger.error(f"Failed to establish database connection during startup: {e}")
+        logger.warning("Application will continue without database functionality")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down application...")
+
+app = FastAPI(lifespan=lifespan)
 chatbot = Chatbot()
 
 # Get allowed origins from environment variable or use defaults
@@ -27,16 +44,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def startup():
-    logger.info("Starting up application...")
-    try:
-        db = Database.get_instance()
-        logger.info("Database connection established successfully during startup")
-    except Exception as e:
-        logger.error(f"Failed to establish database connection during startup: {e}")
-        logger.warning("Application will continue without database functionality")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -57,9 +64,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Receive message from client
                 data = await websocket.receive_text()
                 message_data = json.loads(data)
-                logger.info(f"Received message: {message_data['content'][:50]}...")
+                logger.info(f"Received message: {message_data.get('content', message_data.get('type', 'unknown'))[:50]}...")
                 
                 try:
+                    # Check if this is a reset command
+                    if message_data.get("type") == "reset":
+                        logger.info("Resetting chatbot history")
+                        chatbot.reset_history()
+                        await websocket.send_json({"type": "reset_confirmed", "content": "Chat history has been reset."})
+                        continue
+                    
                     # Save user message to database if available
                     if db:
                         try:

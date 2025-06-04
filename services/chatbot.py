@@ -212,4 +212,14 @@ class Chatbot:
                 return "I apologize, but I couldn't process your message properly."
         except Exception as e:
             logger.error(f"Error in get_response: {e}")
-            return "I apologize, but I encountered an error. Could you please try again?" 
+            return "I apologize, but I encountered an error. Could you please try again?"
+
+    def reset_history(self):
+        """Reset the chatbot to its initial state, clearing all conversation history and context."""
+        self.state = {
+            "messages": [],
+            "next": None,
+            "context": {"first_interaction": True},
+            "community_info": None
+        }
+        logger.info("Chatbot history has been reset to initial state") 
