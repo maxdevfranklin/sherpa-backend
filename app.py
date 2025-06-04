@@ -1,69 +1,95 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import json
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from services.database import Database
+from services.chatbot import Chatbot
+import logging
+from fastapi import WebSocketDisconnect
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
+chatbot = Chatbot()
 
-# Enable CORS for React development server
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # React development server
-        "https://sherpa-frontend-production.up.railway.app",  # Production frontend
-        "http://sherpa-frontend-production.up.railway.app"    # Production frontend (non-secure)
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize the LLM
-model = ChatAnthropic(model="claude-3-sonnet-20240229")
+@app.on_event("startup")
+async def startup():
+    logger.info("Starting up application...")
+    try:
+        db = Database.get_instance()
+        logger.info("Database connection established successfully during startup")
+    except Exception as e:
+        logger.error(f"Failed to establish database connection during startup: {e}")
+        logger.warning("Application will continue without database functionality")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    
-    # Send initial message
-    initial_message = """I'd be happy to get you the information you need, but before I do, do you mind if I ask a few quick questions? That way, I can really understand what's important and make sure I'm helping in the best way possible."""
-    await websocket.send_json({"type": "bot", "content": initial_message})
-    
-    # Initialize messages
-    messages = [
-        SystemMessage(content="""You are a compassionate and understanding guide helping families through important life decisions and journeys. Your approach should be:
-1. Always be empathetic and patient
-2. Listen carefully to their concerns and needs
-3. Ask clarifying questions when needed
-4. Provide structured, clear guidance while being warm and supportive
-5. Acknowledge the emotional aspects of their journey
-6. Break down complex decisions into manageable steps
-7. Validate their feelings and concerns
-8. Offer practical suggestions while being sensitive to their unique situation"""),
-        HumanMessage(content="Hello, I need some guidance.")
-    ]
-    
     try:
+        await websocket.accept()
+        logger.info("WebSocket connection established")
+        
+        # Try to initialize database but don't fail if it doesn't work
+        try:
+            db = Database.get_instance()
+            logger.info("Database connection established for WebSocket session")
+        except Exception as e:
+            logger.error(f"Database connection failed for WebSocket session: {e}")
+            db = None
+        
         while True:
-            # Receive message from client
-            data = await websocket.receive_text()
-            user_message = json.loads(data)
+            try:
+                # Receive message from client
+                data = await websocket.receive_text()
+                message_data = json.loads(data)
+                logger.info(f"Received message: {message_data['content'][:50]}...")
+                
+                try:
+                    # Save user message to database if available
+                    if db:
+                        try:
+                            db.save_message("user", message_data["content"])
+                        except Exception as e:
+                            logger.error(f"Failed to save user message to database: {e}")
+                    
+                    # Get response from chatbot
+                    response = chatbot.get_response(message_data["content"])
+                    
+                    # Save bot response to database if available
+                    if db:
+                        try:
+                            db.save_message("bot", response)
+                        except Exception as e:
+                            logger.error(f"Failed to save bot message to database: {e}")
+                    
+                    # Send response back to client
+                    await websocket.send_json({"content": response})
+                    logger.info(f"Sent response: {response[:50]}...")
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")
+                    await websocket.send_json({"content": "Sorry, there was an error processing your message."})
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON received: {e}")
+                await websocket.send_json({"content": "Invalid message format"})
+            except Exception as e:
+                logger.error(f"Error in message loop: {e}")
+                break
             
-            # Add user message to history
-            messages.append(HumanMessage(content=user_message["content"]))
-            
-            # Get bot response
-            response = model.invoke(messages)
-            messages.append(response)
-            
-            # Send response back to client
-            await websocket.send_json({
-                "type": "bot",
-                "content": response.content
-            })
-            
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected normally")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"WebSocket error: {e}")
     finally:
-        await websocket.close() 
+        logger.info("WebSocket connection closed")
+
+@app.get("/")
+async def root():
+    return {"message": "WebSocket server is running"} 
