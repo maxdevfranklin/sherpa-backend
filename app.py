@@ -5,6 +5,7 @@ from services.database import Database
 from services.chatbot import Chatbot
 import logging
 from fastapi import WebSocketDisconnect
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -12,10 +13,16 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 chatbot = Chatbot()
 
+# Get allowed origins from environment variable or use defaults
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,https://sherpa-frontend-production.up.railway.app"
+).split(",")
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
